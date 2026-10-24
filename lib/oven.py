@@ -1,8 +1,8 @@
 import threading
 import time
-import datetime
 import logging
 import json
+import math
 import config
 import os
 import digitalio
@@ -139,6 +139,8 @@ class TempSensorReal(TempSensor):
         '''read temp from tc and convert if needed'''
         try:
             temp = self.raw_temp() # raw_temp provided by subclasses
+            if temp is None or not math.isfinite(temp):
+                raise ValueError("thermocouple returned %r" % (temp,))
             if config.temp_scale.lower() == "f":
                 temp = (temp*9/5)+32
             self.status.good()
@@ -150,6 +152,13 @@ class TempSensorReal(TempSensor):
             else:
                 log.error("Problem reading temp %s" % (tce.message))
                 self.status.bad()
+        except Exception as e:
+            # anything else (an spi/bus error, a nan reading) is a failed
+            # read too. it must not kill this thread: the oven would keep
+            # heating against the last temperatures, frozen. counting it
+            # as bad lets the too-many-errors check abort the run.
+            log.error("Problem reading temp %s" % (e))
+            self.status.bad()
         return None
 
     def temperature(self):
@@ -158,10 +167,13 @@ class TempSensorReal(TempSensor):
 
     def run(self):
         while True:
-            temp = self.get_temperature()
-            if temp:
-                self.temptracker.add(temp)
+            self.sample()
             time.sleep(self.sleeptime)
+
+    def sample(self):
+        temp = self.get_temperature()
+        if temp is not None:
+            self.temptracker.add(temp)
 
 class TempTracker(object):
     '''creates a sliding window of N temperatures per
@@ -387,7 +399,7 @@ class Oven(threading.Thread):
         self.reset()
         self.startat = startat * 60
         self.runtime = runtime
-        self.start_time = datetime.datetime.now() - datetime.timedelta(seconds=self.startat)
+        self.start_time = time.monotonic() - self.startat
         self.profile = profile
         self.totaltime = profile.get_duration()
         self.state = "RUNNING"
@@ -398,8 +410,11 @@ class Oven(threading.Thread):
         self.reset()
         self.save_automatic_restart_state()
 
+    # start_time and runtime use the monotonic clock, so a daylight-saving
+    # change or an ntp clock jump (the pi has no rtc, so its clock jumps
+    # when ntp syncs after boot) cannot skip or repeat part of a firing
     def get_start_time(self):
-        return datetime.datetime.now() - datetime.timedelta(milliseconds = self.runtime * 1000)
+        return time.monotonic() - self.runtime
 
     def kiln_must_catch_up(self):
         '''shift the whole schedule forward in time by one time_step
@@ -423,11 +438,11 @@ class Oven(threading.Thread):
 
     def update_runtime(self):
 
-        runtime_delta = datetime.datetime.now() - self.start_time
-        if runtime_delta.total_seconds() < 0:
-            runtime_delta = datetime.timedelta(0)
+        runtime_delta = time.monotonic() - self.start_time
+        if runtime_delta < 0:
+            runtime_delta = 0
 
-        self.runtime = runtime_delta.total_seconds()
+        self.runtime = runtime_delta
 
     def update_target_temp(self):
         self.target = self.profile.get_target_temperature(self.runtime)
@@ -543,31 +558,68 @@ class Oven(threading.Thread):
         log.info("ovenwatcher set in oven class")
         self.ovenwatcher = watcher
 
+    def relay_off(self):
+        '''switch the elements off. only a real oven has a relay.'''
+        pass
+
     def run(self):
         while True:
-            log.debug('Oven running on ' + threading.current_thread().name)
-            if self.state == "IDLE":
-                if self.should_i_automatic_restart() == True:
-                    self.automatic_restart()
-                time.sleep(1)
-                continue
-            if self.state == "PAUSED":
-                self.start_time = self.get_start_time()
-                self.update_runtime()
-                self.update_target_temp()
-                self.heat_then_cool()
-                self.reset_if_emergency()
-                self.reset_if_schedule_ended()
-                continue
-            if self.state == "RUNNING":
-                self.update_cost()
-                self.save_automatic_restart_state()
-                self.kiln_must_catch_up()
-                self.update_runtime()
-                self.update_target_temp()
-                self.heat_then_cool()
-                self.reset_if_emergency()
-                self.reset_if_schedule_ended()
+            self.run_guarded()
+
+    def run_guarded(self):
+        '''one pass of the control loop. an unhandled error must never
+        kill this thread: heater control and the emergency checks would
+        stop silently, with the relay left in whatever state it was in,
+        while the ui keeps looking normal. instead switch the relay off
+        first, then abort the run and carry on.'''
+        try:
+            self._run_once()
+        except Exception as e:
+            log.exception("oven control loop error, aborting run: %s" % (e))
+            try:
+                self.relay_off()
+            except Exception as relay_error:
+                log.error("could not switch relay off after control loop "
+                          "error: %s" % (relay_error))
+            try:
+                self.abort_run()
+            except Exception as abort_error:
+                log.error("could not reset oven after control loop "
+                          "error: %s" % (abort_error))
+            time.sleep(1)
+
+    def _run_once(self):
+        log.debug('Oven running on ' + threading.current_thread().name)
+        if self.state == "IDLE":
+            if self.should_i_automatic_restart() == True:
+                self.automatic_restart()
+            time.sleep(1)
+            return
+        if self.state in ("PAUSED", "RUNNING") and self.profile is None:
+            # inconsistent state, e.g. pause/resume requested while idle.
+            # return to idle instead of crashing on the missing profile
+            log.error("%s state without a profile, returning to IDLE" % (self.state))
+            self.relay_off()
+            self.reset()
+            time.sleep(1)
+            return
+        if self.state == "PAUSED":
+            self.start_time = self.get_start_time()
+            self.update_runtime()
+            self.update_target_temp()
+            self.heat_then_cool()
+            self.reset_if_emergency()
+            self.reset_if_schedule_ended()
+            return
+        if self.state == "RUNNING":
+            self.update_cost()
+            self.save_automatic_restart_state()
+            self.kiln_must_catch_up()
+            self.update_runtime()
+            self.update_target_temp()
+            self.heat_then_cool()
+            self.reset_if_emergency()
+            self.reset_if_schedule_ended()
 
 class SimulatedOven(Oven):
 
@@ -594,16 +646,16 @@ class SimulatedOven(Oven):
         self.start()
         log.info("SimulatedOven started")
 
-    # runtime is in sped up time, start_time is actual time of day
+    # runtime is in sped up time, start_time is on the (real) monotonic clock
     def get_start_time(self):
-        return datetime.datetime.now() - datetime.timedelta(milliseconds = self.runtime * 1000 / self.speedup_factor)
+        return time.monotonic() - self.runtime / self.speedup_factor
 
     def update_runtime(self):
-        runtime_delta = datetime.datetime.now() - self.start_time
-        if runtime_delta.total_seconds() < 0:
-            runtime_delta = datetime.timedelta(0)
+        runtime_delta = (time.monotonic() - self.start_time) * self.speedup_factor
+        if runtime_delta < 0:
+            runtime_delta = 0
 
-        self.runtime = runtime_delta.total_seconds() * self.speedup_factor
+        self.runtime = runtime_delta
 
     def update_target_temp(self):
         self.target = self.profile.get_target_temperature(self.runtime)
@@ -631,7 +683,7 @@ class SimulatedOven(Oven):
         self.board.temp_sensor.simulated_temperature = self.t
 
     def heat_then_cool(self):
-        now_simulator = self.start_time + datetime.timedelta(milliseconds = self.runtime * 1000)
+        now_simulator = self.start_time + self.runtime
         pid = self.pid.compute(self.target,
                                self.board.temp_sensor.temperature() +
                                config.thermocouple_offset, now_simulator)
@@ -694,10 +746,13 @@ class RealOven(Oven):
         super().reset()
         self.output.cool(0)
 
+    def relay_off(self):
+        self.output.cool(0)
+
     def heat_then_cool(self):
         pid = self.pid.compute(self.target,
                                self.board.temp_sensor.temperature() +
-                               config.thermocouple_offset, datetime.datetime.now())
+                               config.thermocouple_offset, time.monotonic())
 
         heat_on = float(self.time_step * pid)
         heat_off = float(self.time_step * (1 - pid))
@@ -743,7 +798,9 @@ class Profile():
     def find_x_given_y_on_line_from_two_points(y, point1, point2):
         if point1[0] > point2[0]: return 0  # time2 before time1 makes no sense in kiln segment
         if point1[1] >= point2[1]: return 0 # Zero will crach. Negative temeporature slope, we don't want to seek a time.
-        x = (y - point1[1]) * (point2[0] -point1[0] ) / (point2[1] - point1[1]) + point1[0]
+        dy = point2[1] - point1[1]
+        if dy == 0: return 0
+        x = (y - point1[1]) * (point2[0] -point1[0] ) / dy + point1[0]
         return x
 
     def find_next_time_from_temperature(self, temperature):
@@ -779,9 +836,17 @@ class Profile():
         if time > self.get_duration():
             return 0
 
+        if time == self.get_duration():
+            # exactly at the end there is no next point to interpolate
+            # from; hold the final temperature instead of crashing
+            return self.data[-1][1]
+
         (prev_point, next_point) = self.get_surrounding_points(time)
 
-        incl = float(next_point[1] - prev_point[1]) / float(next_point[0] - prev_point[0])
+        dt = float(next_point[0] - prev_point[0])
+        if dt == 0:
+            return prev_point[1]
+        incl = float(next_point[1] - prev_point[1]) / dt
         temp = prev_point[1] + (time - prev_point[0]) * incl
         return temp
 
@@ -792,7 +857,7 @@ class PID():
         self.ki = ki
         self.kp = kp
         self.kd = kd
-        self.lastNow = datetime.datetime.now()
+        self.lastNow = time.monotonic()
         self.iterm = 0
         self.lastErr = 0
         self.pidstats = {}
@@ -802,8 +867,11 @@ class PID():
     # settled on -50 to 50 and then divide by 50 at the end. This results
     # in a larger PID control window and much more accurate control...
     # instead of what used to be binary on/off control.
+    # now is in seconds on the monotonic clock (or the simulator's clock),
+    # so timeDelta is immune to daylight-saving and ntp clock jumps and
+    # keeps sub-second precision for the kd term
     def compute(self, setpoint, ispoint, now):
-        timeDelta = (now - self.lastNow).total_seconds()
+        timeDelta = now - self.lastNow
 
         window_size = 100
 
@@ -830,9 +898,13 @@ class PID():
                     output = config.throttle_percent/100
                     log.info("max heating throttled at %d percent below %d degrees to prevent overshoot" % (config.throttle_percent,config.throttle_below_temp))
         else:
-            icomp = (error * timeDelta * (1/self.ki))
-            self.iterm += (error * timeDelta * (1/self.ki))
-            dErr = (error - self.lastErr) / timeDelta
+            ki = self.ki if self.ki else 1
+            icomp = (error * timeDelta * (1/ki))
+            self.iterm += (error * timeDelta * (1/ki))
+            if timeDelta > 0:
+                dErr = (error - self.lastErr) / timeDelta
+            else:
+                dErr = 0
             output = self.kp * error + self.iterm + self.kd * dErr
             output = sorted([-1 * window_size, output, window_size])[1]
             out4logs = output
@@ -846,7 +918,7 @@ class PID():
             output = 0
 
         self.pidstats = {
-            'time': time.mktime(now.timetuple()),
+            'time': time.time(),
             'timeDelta': timeDelta,
             'setpoint': setpoint,
             'ispoint': ispoint,
