@@ -85,6 +85,11 @@ def load_settings(path):
     return settings
 
 
+def clock_time(when):
+    '''12 hour time for messages, like 3:40 PM'''
+    return when.strftime("%I:%M %p").lstrip("0")
+
+
 def find_holds(data, min_seconds):
     '''returns (start, end, temperature) for each flat stretch of a
     profile's [seconds, temperature] points lasting at least min_seconds.'''
@@ -228,13 +233,13 @@ class Notifier(object):
                     seconds=end - self.s["read_before_end_minutes"] * 60 - msg["runtime"])
                 self.info("%s :alarm_clock: Get ready: the %s hold starts soon. "
                           "Reading due about %s; I'll message you."
-                          % (self.s["mention"], self.fmt(temp), read_at.strftime("%H:%M")))
+                          % (self.s["mention"], self.fmt(temp), clock_time(read_at)))
             else:
                 self.info("%s :memo: *Read the front thermometer now* (%s hold). "
                           "Web shows %s, target %s. Time %s."
                           % (self.s["mention"], self.fmt(temp), self.fmt(msg["temperature"]),
                              self.fmt(msg["target"]),
-                             datetime.datetime.now().strftime("%H:%M")))
+                             clock_time(datetime.datetime.now())))
 
     def firing_ended(self, now):
         last = self.last

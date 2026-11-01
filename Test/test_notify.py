@@ -1,8 +1,10 @@
 '''kiln-notify decides what to send from a stream of kiln states. These
 tests feed it states on a fake clock, with no network or kiln.'''
 
+import datetime
 import importlib.util
 import os
+import re
 
 import pytest
 
@@ -208,6 +210,26 @@ def test_reminders_follow_the_schedule():
     reads = rig.named("Read the front thermometer")
     assert len(reads) == 1
     assert "199.8" in reads[0] and "200.0" in reads[0]
+
+
+def test_clock_time_is_12_hour():
+    def at(hour, minute):
+        return datetime.datetime(2026, 11, 1, hour, minute)
+    assert kiln_notify.clock_time(at(15, 40)) == "3:40 PM"
+    assert kiln_notify.clock_time(at(9, 5)) == "9:05 AM"
+    assert kiln_notify.clock_time(at(0, 5)) == "12:05 AM"
+    assert kiln_notify.clock_time(at(12, 0)) == "12:00 PM"
+
+
+def test_reminders_show_12_hour_time():
+    rig = Rig()
+    rig.feed(5)
+    calibrate(rig, 0)
+    calibrate(rig, 1200)
+    calibrate(rig, 2700)
+    clock = re.compile(r"\b\d{1,2}:\d\d [AP]M\b")
+    assert clock.search(rig.named("Get ready")[0])
+    assert clock.search(rig.named("Read the front thermometer")[0])
 
 
 def test_every_hold_gets_both_reminders():
