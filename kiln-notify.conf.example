@@ -1,0 +1,28 @@
+# copy to ~/kiln-notify.conf and run: chmod 600 ~/kiln-notify.conf
+# the webhook url is a secret: anyone who has it can post to your channel.
+# never commit it. temperatures are in the kiln's display scale.
+[notify]
+webhook_url = https://hooks.slack.com/services/REPLACE/WITH/YOURS
+
+# profiles that get "get ready" and "read now" reminders around each hold
+reminder_profiles = calibrate-steps
+
+# everything below is optional; these are the defaults
+#status_url = ws://localhost:8081/status
+#storage_url = ws://localhost:8081/storage
+#temp_unit = C
+#mention = <!channel>
+#unreachable_seconds = 60
+#stall_rise = 2
+#stall_minutes = 15
+#off_target = 25
+#off_target_minutes = 10
+#idle_rise = 15
+#idle_rise_minutes = 5
+#idle_grace_minutes = 5
+#finish_margin_seconds = 15
+#cooled_temp = 65
+#repeat_minutes = 30
+#hold_minutes = 5
+#prepare_minutes = 10
+#read_before_end_minutes = 5
