@@ -1,0 +1,13 @@
+[Unit]
+Description=kiln-notify
+After=network-online.target kiln-controller.service
+Wants=network-online.target
+
+[Service]
+User=pi
+ExecStart=/home/pi/kiln-controller/venv/bin/python /home/pi/kiln-controller/kiln-notify.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

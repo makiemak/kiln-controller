@@ -2,6 +2,37 @@
 
 Versions are `YY.MM.N`. Each release lists the platform it was tested on.
 
+## 25.10.2
+
+Slack notifications. `lib/`, `kiln-controller.py`, `config.py` and the
+profiles are unchanged, so kiln control is exactly as in 25.10.1 and an
+existing install keeps its settings.
+
+### Added
+
+- **`kiln-notify.py`**, a separate service that sends slack messages:
+  firings starting and finishing, firings ending early, the controller
+  not responding, the kiln not heating, the kiln far from its target,
+  and temperature rising with no firing running. It only listens, so
+  stopping it cannot affect a firing. See `docs/notifications.md`.
+- **Calibration reminders:** chosen profiles get a "get ready" message
+  before each hold and a "read the front thermometer now" message near
+  its end, with the web reading at that moment.
+
+### Changed
+
+- README: a "This fork" section, and Celsius-first `temp_scale` wording.
+
+### Compatibility
+
+| | |
+|---|---|
+| Raspberry Pi OS | Bookworm (Debian 12) |
+| Python | 3.11.2 (system `/usr/bin/python3`, venv from `requirements.txt`) |
+| Hardware | Raspberry Pi 3 Model B, aarch64, MAX31856 with a type R thermocouple, software SPI |
+| Dependencies | same as 25.10.0 (`pi-freeze-25.10.txt`) |
+| Not compatible | Trixie (Debian 13) with its system Python 3.13 |
+
 ## 25.10.1
 
 Safety fixes for the 25.10 baseline. No changes to `config.py` or the

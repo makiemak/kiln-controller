@@ -3,6 +3,20 @@ Kiln Controller
 
 Turns a Raspberry Pi into an inexpensive, web-enabled kiln controller.
 
+## This fork
+
+This is a fork of [jbruce12000/kiln-controller](https://github.com/jbruce12000/kiln-controller), run on a real kiln in **Celsius**. Tagged releases are tested there; see the [changelog](CHANGELOG.md) for what changed and which platform each release was tested on.
+
+| Branch | Purpose |
+| ------ | ------- |
+| `main` | Released code only. Changes arrive by pull request, and every release is tagged here. |
+| `develop` | The next major release. Nothing here reaches the kiln until it becomes a release candidate. |
+| `tooling/rehearsal` | Docker rehearsal and fake hardware. Merges into `develop`. |
+| `feature/*`, `hotfix/*`, `docs/*` | Short-lived changes, cut from `main` for the current release line. |
+| `sync/upstream-*` | Future merges from upstream, cut from `develop`. They never go straight to `main`. |
+
+Versions are `YY.MM.N`, numbered by release line: `25.10.0` is the upstream code the kiln first ran, and `25.10.1` onwards are fixes on top of it.
+
 ## Features
 
   * supports [many boards](https://github.com/jbruce12000/kiln-controller/blob/main/docs/supported-boards.md) into addition to raspberry pi
@@ -21,7 +35,7 @@ Turns a Raspberry Pi into an inexpensive, web-enabled kiln controller.
   * support for skipping first part of profile to match current kiln temperature
   * prevents integral wind-up when temperatures not near the set point
   * automatic restarts if there is a power outage or other event
-  * support for a watcher to page you via slack if you kiln is out of whack
+  * [slack notifications](docs/notifications.md) for firings, problems and calibration readings
   * easy scheduling of future kiln runs
 
 
@@ -91,7 +105,7 @@ All parameters are defined in config.py. You need to read through config.py care
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | sensor_time_wait | 2 seconds | It's the duty cycle for the entire system.  It's set to two seconds by default which means that a decision is made every 2s about whether to turn on relay[s] and for how long. If you use mechanical relays, you may want to increase this. At 2s, my SSR switches 11,000 times in 13 hours. |
-| temp_scale | f | f for farenheit, c for celcius |
+| temp_scale | f | c for Celsius, f for Fahrenheit. All temperatures in config.py are in this scale. This kiln runs `c`; if you change it, change the other temperatures in config.py to match. |
 | pid parameters | | Used to tune your kiln. See PID Tuning. |
 | simulate | True | Simulate a kiln. Used to test the software by new users so they can check out the features. |
  
