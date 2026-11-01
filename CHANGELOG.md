@@ -2,6 +2,15 @@
 
 Versions are `YY.MM.N`. Each release lists the platform it was tested on.
 
+## 25.10.3
+
+Slack reminders show 12 hour time, like `3:40 PM`. Only `kiln-notify.py`
+changes; kiln control is exactly as in 25.10.1.
+
+### Compatibility
+
+Same as 25.10.2.
+
 ## 25.10.2
 
 Slack notifications. `lib/`, `kiln-controller.py`, `config.py` and the
